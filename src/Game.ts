@@ -13,7 +13,6 @@ export class Game {
   private timer = new THREE.Timer();
 
   private input = new Input();
-  private player = new Player();
   private world = new World();
 
   private state: State = "menu";
@@ -30,7 +29,12 @@ export class Game {
     subtitle: document.getElementById("subtitle")!,
   };
 
-  constructor() {
+  /** Model gibi asenkron kaynakları yükleyip oyunu kurar. */
+  static async create(): Promise<Game> {
+    return new Game(await Player.load());
+  }
+
+  private constructor(private player: Player) {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -72,11 +76,13 @@ export class Game {
   private start() {
     if (this.state === "over") this.reset();
     this.state = "playing";
+    this.player.run();
     this.hud.overlay.classList.add("hidden");
   }
 
   private gameOver() {
     this.state = "over";
+    this.player.die();
     const score = Math.floor(this.distance) + this.coins * 10;
     if (score > this.best) {
       this.best = score;
@@ -108,7 +114,7 @@ export class Game {
       this.speed = Math.min(MAX_SPEED, this.speed + SPEED_GAIN * dt);
       this.distance += this.speed * dt;
 
-      this.player.update(dt);
+      this.player.update(dt, this.speed);
       this.world.update(dt, this.speed, elapsed);
 
       const bounds = this.player.getBounds();
@@ -117,6 +123,8 @@ export class Game {
 
       this.updateHud();
     }
+
+    this.player.animate(dt);
 
     // Kamera oyuncuyu yatayda yumuşakça takip eder
     const camTargetX = this.player.mesh.position.x * 0.5;
