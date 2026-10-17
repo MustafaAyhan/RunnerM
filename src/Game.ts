@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { MAX_SPEED, SPEED_GAIN, START_SPEED } from "./config";
 import { Input } from "./input";
 import { Player } from "./Player";
+import { Sound } from "./Sound";
 import { World } from "./World";
 
 type State = "menu" | "playing" | "over";
@@ -14,6 +15,7 @@ export class Game {
 
   private input = new Input();
   private world = new World();
+  private sound = new Sound();
 
   private state: State = "menu";
   private speed = START_SPEED;
@@ -27,6 +29,7 @@ export class Game {
     overlay: document.getElementById("overlay")!,
     title: document.getElementById("title")!,
     subtitle: document.getElementById("subtitle")!,
+    mute: document.getElementById("mute")!,
   };
 
   /** Model gibi asenkron kaynakları yükleyip oyunu kurar. */
@@ -59,6 +62,11 @@ export class Game {
     this.scene.add(this.world.group, this.player.mesh);
     this.reset();
 
+    // Butona basmak oyunu başlatmasın diye pointerdown'ı Input'a ulaştırmıyoruz
+    this.hud.mute.addEventListener("pointerdown", (e) => e.stopPropagation());
+    this.hud.mute.addEventListener("click", () => this.toggleMute());
+    this.updateMuteButton();
+
     window.addEventListener("resize", () => this.resize());
     this.resize();
     this.renderer.setAnimationLoop((t) => this.tick(t));
@@ -77,12 +85,16 @@ export class Game {
     if (this.state === "over") this.reset();
     this.state = "playing";
     this.player.run();
+    this.sound.unlock();
+    this.sound.startMusic();
     this.hud.overlay.classList.add("hidden");
   }
 
   private gameOver() {
     this.state = "over";
     this.player.die();
+    this.sound.crash();
+    this.sound.stopMusic();
     const score = Math.floor(this.distance) + this.coins * 10;
     if (score > this.best) {
       this.best = score;
@@ -100,25 +112,35 @@ export class Game {
     const elapsed = this.timer.getElapsed();
 
     for (const action of this.input.drain()) {
+      if (action === "mute") { this.toggleMute(); continue; }
       if (this.state !== "playing") {
         if (action === "start") this.start();
         continue;
       }
-      if (action === "left") this.player.moveLane(-1);
-      else if (action === "right") this.player.moveLane(1);
-      else if (action === "jump") this.player.jump();
-      else if (action === "slide") this.player.slide();
+      if (action === "left" || action === "right") {
+        if (this.player.moveLane(action === "left" ? -1 : 1)) this.sound.lane();
+      } else if (action === "jump") {
+        if (this.player.jump()) this.sound.jump();
+      } else if (action === "slide") {
+        this.player.slide();
+        this.sound.slide();
+      }
     }
 
     if (this.state === "playing") {
       this.speed = Math.min(MAX_SPEED, this.speed + SPEED_GAIN * dt);
       this.distance += this.speed * dt;
+      this.sound.setTempo(this.speed / START_SPEED);
 
       this.player.update(dt, this.speed);
       this.world.update(dt, this.speed, elapsed);
 
       const bounds = this.player.getBounds();
-      this.coins += this.world.collectCoins(bounds);
+      const collected = this.world.collectCoins(bounds);
+      if (collected > 0) {
+        this.coins += collected;
+        this.sound.coin();
+      }
       if (this.world.hitsObstacle(bounds)) this.gameOver();
 
       this.updateHud();
@@ -131,6 +153,19 @@ export class Game {
     this.camera.position.x += (camTargetX - this.camera.position.x) * (1 - Math.exp(-6 * dt));
 
     this.renderer.render(this.scene, this.camera);
+  }
+
+  private toggleMute() {
+    this.sound.unlock();
+    this.sound.toggleMute();
+    this.updateMuteButton();
+  }
+
+  private updateMuteButton() {
+    this.hud.mute.textContent = this.sound.isMuted ? "🔇" : "🔊";
+    const label = this.sound.isMuted ? "Sesi aç (M)" : "Sesi kapat (M)";
+    this.hud.mute.title = label;
+    this.hud.mute.setAttribute("aria-label", label);
   }
 
   private updateHud() {

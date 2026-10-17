@@ -75,18 +75,24 @@ export class Player {
   run() { this.play("Running"); }
   die() { this.play("Death", 0.1); }
 
-  moveLane(dir: -1 | 1) {
-    this.lane = THREE.MathUtils.clamp(this.lane + dir, -1, 1);
+  /** Şerit değiştiyse true döner (kenardaysa false). */
+  moveLane(dir: -1 | 1): boolean {
+    const next = THREE.MathUtils.clamp(this.lane + dir, -1, 1);
+    if (next === this.lane) return false;
+    this.lane = next;
+    return true;
   }
 
-  jump() {
-    if (!this.isGrounded) return;
+  /** Zıplama başladıysa true döner (havadaysa false). */
+  jump(): boolean {
+    if (!this.isGrounded) return false;
     this.slideTimer = 0;
     this.velocityY = JUMP_VELOCITY;
     // Klibi havada kalma süresine sığdır
     const airTime = (2 * JUMP_VELOCITY) / -GRAVITY;
     this.actions.Jump.timeScale = this.actions.Jump.getClip().duration / airTime;
     this.play("Jump", 0.08);
+    return true;
   }
 
   slide() {

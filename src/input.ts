@@ -1,10 +1,11 @@
-export type Action = "left" | "right" | "jump" | "slide" | "start";
+export type Action = "left" | "right" | "jump" | "slide" | "start" | "mute";
 
 const KEYMAP: Record<string, Action> = {
   ArrowLeft: "left", KeyA: "left",
   ArrowRight: "right", KeyD: "right",
   ArrowUp: "jump", KeyW: "jump", Space: "jump",
   ArrowDown: "slide", KeyS: "slide",
+  KeyM: "mute",
 };
 
 /** Klavye ve dokunmatik kaydırmayı tek bir aksiyon kuyruğuna çevirir. */

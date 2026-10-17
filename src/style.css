@@ -9,6 +9,13 @@ canvas { display: block; }
   font-size: 28px; font-weight: 800; text-shadow: 0 2px 4px rgb(0 0 0 / 0.4);
   pointer-events: none;
 }
+#hud { z-index: 2; }
+#hud #coins { margin-left: auto; margin-right: 12px; }
+#mute {
+  pointer-events: auto; cursor: pointer;
+  background: rgb(0 0 0 / 0.25); border: 0; border-radius: 8px;
+  font-size: 22px; line-height: 1; padding: 6px 8px;
+}
 
 #overlay {
   position: fixed; inset: 0;
