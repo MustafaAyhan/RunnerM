@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { intersects, type AABB } from "./collision";
 import { Decor } from "./Decor";
 import { DESPAWN_Z, LANES, LANE_WIDTH, MAX_ROW_GAP, MIN_ROW_GAP, SPAWN_Z } from "./config";
+import { createPowerUpMesh, POWERUP_KINDS, type PowerUpKind } from "./PowerUps";
 
 /**
  * wall:    şerit değiştirmek zorundasın
@@ -12,6 +13,7 @@ type ObstacleKind = "wall" | "barrier" | "bar";
 
 interface Obstacle { kind: ObstacleKind; mesh: THREE.Mesh; size: THREE.Vector3; active: boolean; }
 interface Coin { mesh: THREE.Mesh; active: boolean; }
+interface Pickup { kind: PowerUpKind; mesh: THREE.Group; active: boolean; }
 
 const OBSTACLE_SPECS: Record<ObstacleKind, { size: [number, number, number]; y: number; color: number }> = {
   wall:    { size: [2.4, 3.0, 1.2], y: 1.5,  color: 0x3355aa },
@@ -20,11 +22,16 @@ const OBSTACLE_SPECS: Record<ObstacleKind, { size: [number, number, number]; y: 
 };
 const OBSTACLE_KINDS = Object.keys(OBSTACLE_SPECS) as ObstacleKind[];
 const COIN_SIZE = new THREE.Vector3(0.7, 0.7, 0.7);
+const PICKUP_SIZE = new THREE.Vector3(1, 1.2, 1);
+const PICKUP_Y = 1;
+const POWERUP_CHANCE = 0.09; // sıra başına
+const MAGNET_RANGE = 30;     // oyuncunun önünde bu mesafedeki altınlar çekilir
 
 export class World {
   readonly group = new THREE.Group();
   private obstacles: Obstacle[] = [];
   private coins: Coin[] = [];
+  private pickups: Pickup[] = [];
   private groundTexture: THREE.CanvasTexture;
   private decor = new Decor();
   private distanceToNextRow = 0;
@@ -60,6 +67,7 @@ export class World {
   reset() {
     for (const o of this.obstacles) deactivate(o);
     for (const c of this.coins) deactivate(c);
+    for (const p of this.pickups) deactivate(p);
     this.distanceToNextRow = 40; // başlangıçta biraz nefes alanı
   }
 
@@ -80,6 +88,13 @@ export class World {
       c.mesh.position.z += dz;
       c.mesh.rotation.y = time * 4;
       if (c.mesh.position.z > DESPAWN_Z) deactivate(c);
+    }
+    for (const p of this.pickups) {
+      if (!p.active) continue;
+      p.mesh.position.z += dz;
+      p.mesh.position.y = PICKUP_Y + Math.sin(time * 3) * 0.12;
+      p.mesh.rotation.y = time * 2;
+      if (p.mesh.position.z > DESPAWN_Z) deactivate(p);
     }
 
     this.distanceToNextRow -= dz;
@@ -106,6 +121,43 @@ export class World {
     return collected;
   }
 
+  /** Oyuncunun değdiği power-up'ları toplar ve türlerini döndürür. */
+  collectPowerUps(player: AABB): PowerUpKind[] {
+    const collected: PowerUpKind[] = [];
+    for (const p of this.pickups) {
+      if (p.active && intersects(player, boundsOf(p.mesh.position, PICKUP_SIZE))) {
+        deactivate(p);
+        collected.push(p.kind);
+      }
+    }
+    return collected;
+  }
+
+  /** Mıknatıs: öndeki altınları oyuncunun göğüs hizasına doğru çeker. */
+  attractCoins(target: THREE.Vector3, dt: number) {
+    const k = 1 - Math.exp(-10 * dt);
+    for (const c of this.coins) {
+      if (!c.active) continue;
+      const pos = c.mesh.position;
+      if (pos.z < target.z - MAGNET_RANGE || pos.z > target.z + 1) continue;
+      pos.x += (target.x - pos.x) * k;
+      pos.y += (target.y - pos.y) * k;
+      pos.z += (target.z - pos.z) * k * 0.5;
+    }
+  }
+
+  /** Kalkan: oyuncuya değen engelleri kaldırır, kırılan engel sayısını döndürür. */
+  smashObstacles(player: AABB): number {
+    let smashed = 0;
+    for (const o of this.obstacles) {
+      if (o.active && intersects(player, boundsOf(o.mesh.position, o.size))) {
+        deactivate(o);
+        smashed++;
+      }
+    }
+    return smashed;
+  }
+
   private spawnRow(z: number) {
     // En az bir şerit her zaman tamamen boş kalsın
     const lanes = [...LANES].sort(() => Math.random() - 0.5);
@@ -116,8 +168,11 @@ export class World {
       this.spawnObstacle(kind, lane, z);
     }
 
-    if (Math.random() < 0.6) {
-      const free = lanes[blockedCount];
+    // Boş şeride ya bir power-up ya da altın dizisi (yolda aynı anda tek power-up)
+    const free = lanes[blockedCount];
+    if (Math.random() < POWERUP_CHANCE && !this.pickups.some((p) => p.active)) {
+      this.spawnPickup(POWERUP_KINDS[Math.floor(Math.random() * POWERUP_KINDS.length)], free, z);
+    } else if (Math.random() < 0.6) {
       for (let i = 0; i < 5; i++) this.spawnCoin(free, z + 6 - i * 2.5);
     }
   }
@@ -151,19 +206,31 @@ export class World {
       this.coins.push(c);
       this.group.add(mesh);
     }
+    c.mesh.position.y = 0.9; // mıknatıs yüksekliğini değiştirmiş olabilir
     activate(c, lane, z);
+  }
+
+  private spawnPickup(kind: PowerUpKind, lane: number, z: number) {
+    let p = this.pickups.find((x) => !x.active && x.kind === kind);
+    if (!p) {
+      p = { kind, mesh: createPowerUpMesh(kind), active: false };
+      p.mesh.position.y = PICKUP_Y;
+      this.pickups.push(p);
+      this.group.add(p.mesh);
+    }
+    activate(p, lane, z);
   }
 }
 
 // Nesne havuzu: mesh'ler silinmez, gizlenip tekrar kullanılır.
-function activate(item: { mesh: THREE.Mesh; active: boolean }, lane: number, z: number) {
+function activate(item: { mesh: THREE.Object3D; active: boolean }, lane: number, z: number) {
   item.mesh.position.x = lane * LANE_WIDTH;
   item.mesh.position.z = z;
   item.mesh.visible = true;
   item.active = true;
 }
 
-function deactivate(item: { mesh: THREE.Mesh; active: boolean }) {
+function deactivate(item: { mesh: THREE.Object3D; active: boolean }) {
   item.active = false;
   item.mesh.visible = false;
 }

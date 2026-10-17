@@ -15,6 +15,14 @@ export class Player {
   readonly mesh = new THREE.Group();
   /** Görsel kısım; kayarken sadece bu ezilir, fizik pozisyonu mesh'te kalır. */
   private visual = new THREE.Group();
+  /** Kalkan power-up'ı aktifken oyuncuyu saran yarı saydam balon. */
+  private shieldBubble = new THREE.Mesh(
+    new THREE.SphereGeometry(1.05, 24, 16),
+    new THREE.MeshStandardMaterial({
+      color: 0x3fa7ff, emissive: 0x1a5fa8, transparent: true, opacity: 0.28, depthWrite: false,
+    }),
+  );
+  private shieldTime = 0;
 
   private mixer: THREE.AnimationMixer;
   private actions: Record<Clip, THREE.AnimationAction>;
@@ -43,6 +51,10 @@ export class Player {
     this.visual.add(model);
     this.mesh.add(this.visual);
 
+    this.shieldBubble.position.y = PLAYER_HEIGHT / 2;
+    this.shieldBubble.visible = false;
+    this.mesh.add(this.shieldBubble);
+
     this.mixer = new THREE.AnimationMixer(model);
     const clip = (name: Clip) => {
       const c = THREE.AnimationClip.findByName(gltf.animations, name);
@@ -69,10 +81,15 @@ export class Player {
     this.mesh.position.set(0, 0, 0);
     this.mesh.rotation.set(0, 0, 0);
     this.visual.scale.set(1, 1, 1);
+    this.visual.visible = true;
+    this.shieldBubble.visible = false;
     this.play("Idle");
   }
 
   run() { this.play("Running"); }
+  setShield(on: boolean) { this.shieldBubble.visible = on; }
+  /** Darbe sonrası yanıp sönme için; sadece model gizlenir, kalkan balonu etkilenmez. */
+  setVisible(visible: boolean) { this.visual.visible = visible; }
   die() { this.play("Death", 0.1); }
 
   /** Şerit değiştiyse true döner (kenardaysa false). */
@@ -130,6 +147,11 @@ export class Player {
   /** Animasyon karıştırıcı; menü ve oyun sonu dahil her karede çağrılır. */
   animate(dt: number) {
     this.mixer.update(dt);
+    if (this.shieldBubble.visible) {
+      this.shieldTime += dt;
+      this.shieldBubble.scale.setScalar(1 + Math.sin(this.shieldTime * 6) * 0.04);
+      this.shieldBubble.scale.y *= this.visual.scale.y; // kayarken balon da ezilsin
+    }
   }
 
   getBounds(): AABB {

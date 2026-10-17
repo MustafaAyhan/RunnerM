@@ -86,6 +86,21 @@ export class Sound {
     this.tone({ type: "triangle", from: midiToHz(88), duration: 0.22, volume: 0.35, delay: 0.07 });
   }
 
+  powerUp() {
+    // Yükselen majör arpej: C6 E6 G6 C7
+    [84, 88, 91, 96].forEach((m, i) =>
+      this.tone({ type: "square", from: midiToHz(m), duration: 0.09, volume: 0.2, delay: i * 0.055 }));
+  }
+
+  powerDown() {
+    this.tone({ type: "triangle", from: 660, to: 330, duration: 0.25, volume: 0.25 });
+  }
+
+  shieldBreak() {
+    this.burst({ duration: 0.3, filter: "highpass", from: 2500, to: 6000, volume: 0.6 });
+    this.tone({ type: "square", from: 900, to: 180, duration: 0.3, volume: 0.25 });
+  }
+
   crash() {
     this.burst({ duration: 0.45, filter: "lowpass", from: 3000, to: 120, volume: 0.9 });
     this.tone({ type: "sine", from: 140, to: 35, duration: 0.5, volume: 0.8 });

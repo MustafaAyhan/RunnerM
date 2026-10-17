@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { MAX_SPEED, SPEED_GAIN, START_SPEED } from "./config";
 import { Input } from "./input";
 import { Player } from "./Player";
+import { POWERUP_SPECS, PowerUps, type PowerUpKind } from "./PowerUps";
 import { Sound } from "./Sound";
 import { World } from "./World";
 
@@ -16,11 +17,15 @@ export class Game {
   private input = new Input();
   private world = new World();
   private sound = new Sound();
+  private powerUps = new PowerUps();
 
   private state: State = "menu";
   private speed = START_SPEED;
-  private distance = 0;
+  private score = 0;
   private coins = 0;
+  /** Kalkan bir darbeyi emdikten sonraki kısa dokunulmazlık süresi. */
+  private invulnerable = 0;
+  private magnetTarget = new THREE.Vector3();
   private best = Number(localStorage.getItem("runner.best") ?? 0);
 
   private hud = {
@@ -30,7 +35,9 @@ export class Game {
     title: document.getElementById("title")!,
     subtitle: document.getElementById("subtitle")!,
     mute: document.getElementById("mute")!,
+    powerups: document.getElementById("powerups")!,
   };
+  private powerUpChips = new Map<PowerUpKind, { el: HTMLElement; bar: HTMLElement }>();
 
   /** Model gibi asenkron kaynakları yükleyip oyunu kurar. */
   static async create(): Promise<Game> {
@@ -67,6 +74,9 @@ export class Game {
     this.hud.mute.addEventListener("click", () => this.toggleMute());
     this.updateMuteButton();
 
+    // Geliştirirken konsoldan denemek için: game.onPowerUp("shield") gibi
+    if (import.meta.env.DEV) Object.assign(window, { game: this });
+
     window.addEventListener("resize", () => this.resize());
     this.resize();
     this.renderer.setAnimationLoop((t) => this.tick(t));
@@ -74,8 +84,10 @@ export class Game {
 
   private reset() {
     this.speed = START_SPEED;
-    this.distance = 0;
+    this.score = 0;
     this.coins = 0;
+    this.invulnerable = 0;
+    this.powerUps.reset();
     this.player.reset();
     this.world.reset();
     this.updateHud();
@@ -95,7 +107,7 @@ export class Game {
     this.player.die();
     this.sound.crash();
     this.sound.stopMusic();
-    const score = Math.floor(this.distance) + this.coins * 10;
+    const score = Math.floor(this.score);
     if (score > this.best) {
       this.best = score;
       localStorage.setItem("runner.best", String(score));
@@ -129,19 +141,34 @@ export class Game {
 
     if (this.state === "playing") {
       this.speed = Math.min(MAX_SPEED, this.speed + SPEED_GAIN * dt);
-      this.distance += this.speed * dt;
+      const multiplier = this.powerUps.isActive("double") ? 2 : 1;
+      this.score += this.speed * dt * multiplier;
       this.sound.setTempo(this.speed / START_SPEED);
 
       this.player.update(dt, this.speed);
       this.world.update(dt, this.speed, elapsed);
 
+      for (const kind of this.powerUps.update(dt)) this.onPowerUpEnd(kind);
+      if (this.powerUps.isActive("magnet")) {
+        const p = this.player.mesh.position;
+        this.world.attractCoins(this.magnetTarget.set(p.x, p.y + 0.9, p.z), dt);
+      }
+
       const bounds = this.player.getBounds();
       const collected = this.world.collectCoins(bounds);
       if (collected > 0) {
         this.coins += collected;
+        this.score += collected * 10 * multiplier;
         this.sound.coin();
       }
-      if (this.world.hitsObstacle(bounds)) this.gameOver();
+      for (const kind of this.world.collectPowerUps(bounds)) this.onPowerUp(kind);
+
+      this.invulnerable = Math.max(0, this.invulnerable - dt);
+      this.player.setVisible(this.invulnerable === 0 || Math.floor(elapsed * 16) % 2 === 0);
+      if (this.invulnerable === 0 && this.world.hitsObstacle(bounds)) {
+        if (this.powerUps.isActive("shield")) this.absorbHit(bounds);
+        else this.gameOver();
+      }
 
       this.updateHud();
     }
@@ -153,6 +180,25 @@ export class Game {
     this.camera.position.x += (camTargetX - this.camera.position.x) * (1 - Math.exp(-6 * dt));
 
     this.renderer.render(this.scene, this.camera);
+  }
+
+  private onPowerUp(kind: PowerUpKind) {
+    this.powerUps.activate(kind);
+    if (kind === "shield") this.player.setShield(true);
+    this.sound.powerUp();
+  }
+
+  private onPowerUpEnd(kind: PowerUpKind) {
+    if (kind === "shield") this.player.setShield(false);
+    this.sound.powerDown();
+  }
+
+  private absorbHit(bounds: ReturnType<Player["getBounds"]>) {
+    this.powerUps.consume("shield");
+    this.player.setShield(false);
+    this.world.smashObstacles(bounds);
+    this.invulnerable = 1;
+    this.sound.shieldBreak();
   }
 
   private toggleMute() {
@@ -169,8 +215,35 @@ export class Game {
   }
 
   private updateHud() {
-    this.hud.score.textContent = String(Math.floor(this.distance) + this.coins * 10);
+    this.hud.score.textContent = String(Math.floor(this.score));
     this.hud.coins.textContent = `🪙 ${this.coins}`;
+    this.updatePowerUpHud();
+  }
+
+  /** Aktif power-up'lar için süre çubuklu rozetler; DOM sadece değişince güncellenir. */
+  private updatePowerUpHud() {
+    const active = this.powerUps.entries();
+    for (const [kind, chip] of this.powerUpChips) {
+      if (!active.some((a) => a.kind === kind)) {
+        chip.el.remove();
+        this.powerUpChips.delete(kind);
+      }
+    }
+    for (const { kind, ratio } of active) {
+      let chip = this.powerUpChips.get(kind);
+      if (!chip) {
+        const spec = POWERUP_SPECS[kind];
+        const el = document.createElement("div");
+        el.className = "powerup";
+        el.style.setProperty("--c", `#${spec.color.toString(16).padStart(6, "0")}`);
+        el.innerHTML = `<span class="icon">${spec.icon}</span><span class="name">${spec.label}</span><span class="track"><span class="bar"></span></span>`;
+        chip = { el, bar: el.querySelector<HTMLElement>(".bar")! };
+        this.hud.powerups.append(el);
+        this.powerUpChips.set(kind, chip);
+      }
+      chip.bar.style.transform = `scaleX(${ratio})`;
+      chip.el.classList.toggle("ending", ratio < 0.25);
+    }
   }
 
   private resize() {
