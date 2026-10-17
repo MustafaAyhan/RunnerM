@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { intersects, type AABB } from "./collision";
+import { Decor } from "./Decor";
 import { DESPAWN_Z, LANES, LANE_WIDTH, MAX_ROW_GAP, MIN_ROW_GAP, SPAWN_Z } from "./config";
 
 /**
@@ -25,6 +26,7 @@ export class World {
   private obstacles: Obstacle[] = [];
   private coins: Coin[] = [];
   private groundTexture: THREE.CanvasTexture;
+  private decor = new Decor();
   private distanceToNextRow = 0;
 
   private coinGeometry = new THREE.CylinderGeometry(0.35, 0.35, 0.1, 20).rotateX(Math.PI / 2);
@@ -51,6 +53,8 @@ export class World {
     grass.position.y = -0.01;
     grass.receiveShadow = true;
     this.group.add(grass);
+
+    this.group.add(this.decor.group);
   }
 
   reset() {
@@ -64,6 +68,7 @@ export class World {
 
     // Zemin dokusunu kaydırarak hareket hissi
     this.groundTexture.offset.y += (dz / 200) * this.groundTexture.repeat.y;
+    this.decor.update(dz);
 
     for (const o of this.obstacles) {
       if (!o.active) continue;
